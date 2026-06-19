@@ -13,8 +13,13 @@ with shipping a proprietary or permissively-licensed editor.
 
 ## Decision
 
-1. **Media I/O backend:** a single FFmpeg binding (`ffmpeg-next`) for
-   demux/decode/mux, built against an **LGPL** FFmpeg configuration.
+1. **Media I/O backend:** a single FFmpeg binding for demux/decode/mux, built
+   against an **LGPL** FFmpeg configuration. The concrete crate is
+   `ffmpeg-the-third` — an actively-maintained `ffmpeg-next` fork — because it
+   tracks current FFmpeg (verified against **8.1**, libavcodec 62), which
+   `ffmpeg-next` did not at the time of writing. The API is the same; this is
+   still "one binding". Gated behind the off-by-default `ffmpeg` feature so the
+   default workspace builds without system FFmpeg.
 2. **Default export codecs:** royalty-free and hardware encoders —
    AV1 (`rav1e` / `SVT-AV1`), VP9, and platform hardware (VideoToolbox on
    macOS, NVENC/QSV elsewhere).

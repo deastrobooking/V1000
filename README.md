@@ -97,11 +97,15 @@ or conflicting paths (see [Decision log](#decision-log)).
 Each milestone is independently runnable and demoable. Don't start N+1 before N
 plays end-to-end.
 
-- **M0 — Scaffold.** Cargo workspace, the nine crates as stubs, CI (fmt + clippy
-  + test), `v1000-app` opens an empty `egui` window. *(no media yet)*
-- **M1 — Decode & preview.** `v1000-codec` decodes a single file; `v1000-render`
-  uploads frames to a `wgpu` texture and draws them; basic transport
-  (play/pause/scrub). Frame cache with LRU + buffer pool.
+- **M0 — Scaffold.** ✅ Cargo workspace, the nine crates as stubs, CI (fmt +
+  clippy + test), `v1000-app` opens an empty `egui` window.
+- **M1 — Decode & preview.** ✅ `v1000-codec` decodes a real file via FFmpeg
+  (`FileDecoder`, behind the `ffmpeg` feature) and ships an animated
+  `TestPatternSource` as the default; `v1000-core` provides `Frame`, an LRU
+  `FrameCache`, and a `FramePool`; `v1000-render`'s `PreviewEngine` drives the
+  transport (play/pause/scrub, loop); the GUI uploads frames to the GPU through
+  eframe's **wgpu** backend and draws them. *Deferred to a later pass:
+  GOP-aware seek (backward scrubbing past the cache currently rewinds).*
 - **M2 — Timeline core.** `v1000-timeline` model: one video track, multiple
   clips, in/out trim, ripple delete. Playhead reads from the timeline, not a
   raw file.
@@ -127,10 +131,10 @@ plays end-to-end.
 > or DX12 support.
 
 ```bash
-# Build everything
+# Build everything (default: no FFmpeg dependency; preview uses a test pattern)
 cargo build --workspace
 
-# Run the editor shell (currently: empty window — M0)
+# Run the editor — animated test-pattern player
 cargo run -p v1000-app
 
 # Lint + test (what CI runs)
@@ -139,8 +143,25 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-FFmpeg system libraries are required for `v1000-codec` once M1 lands; see
-that crate's README for platform install steps (`brew install ffmpeg` on macOS).
+### Real file decoding (the `ffmpeg` feature)
+
+File decode is gated behind a feature so the default build needs no system
+libraries. To enable it you need FFmpeg + `pkg-config`:
+
+```bash
+# macOS
+brew install ffmpeg pkg-config
+
+# Run the editor with the Open… dialog + real decode
+cargo run -p v1000-app --features ffmpeg
+
+# Smoke-test the decoder directly against a file
+cargo run -p v1000-codec --features ffmpeg --example decode_probe -- path/to/video.mp4
+```
+
+Verified against FFmpeg 8.1 (libavcodec 62) via `ffmpeg-the-third`. If
+`pkg-config` can't find the libraries, set `PKG_CONFIG_PATH` (e.g.
+`/opt/homebrew/opt/ffmpeg/lib/pkgconfig` on Apple Silicon).
 
 ---
 

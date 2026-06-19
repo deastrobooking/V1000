@@ -74,8 +74,22 @@ cargo run -p v1000-app                                   # smoke-test the shell
 ```
 
 Work on **one crate** when you can: `cargo test -p v1000-timeline` is faster
-than the whole workspace. FFmpeg system libraries are needed once `v1000-codec`
-is non-stub (`brew install ffmpeg` on macOS).
+than the whole workspace.
+
+**FFmpeg feature.** Real file decoding lives behind the off-by-default `ffmpeg`
+feature (`v1000-codec/ffmpeg`, re-exported by `v1000-gui` and `v1000-app`). The
+default build needs no system libraries. To build/test the decode path you need
+`ffmpeg` + `pkg-config` installed (`brew install ffmpeg pkg-config`), then:
+
+```bash
+cargo clippy --workspace --all-targets --features v1000-app/ffmpeg -- -D warnings
+cargo test --workspace --features v1000-app/ffmpeg
+cargo run -p v1000-codec --features ffmpeg --example decode_probe -- <file>
+```
+
+Run **both** the default and `--features ffmpeg` checks before declaring decode
+work done — the feature gate means each can break independently. On Apple
+Silicon you may need `PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg/lib/pkgconfig`.
 
 ---
 
