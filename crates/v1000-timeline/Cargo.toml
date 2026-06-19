@@ -6,5 +6,12 @@ rust-version.workspace = true
 license.workspace = true
 description = "Timeline model: sequences, tracks, clips, edit operations, keyframes."
 
+[features]
+default = []
+# Pulls in the codec's FFmpeg decoder (for examples/integration that read real
+# files through a Sequence). Requires system FFmpeg + pkg-config.
+ffmpeg = ["v1000-codec/ffmpeg"]
+
 [dependencies]
 v1000-core.workspace = true
+v1000-codec.workspace = true

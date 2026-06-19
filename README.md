@@ -106,9 +106,13 @@ plays end-to-end.
   transport (play/pause/scrub, loop); the GUI uploads frames to the GPU through
   eframe's **wgpu** backend and draws them. *Deferred to a later pass:
   GOP-aware seek (backward scrubbing past the cache currently rewinds).*
-- **M2 — Timeline core.** `v1000-timeline` model: one video track, multiple
-  clips, in/out trim, ripple delete. Playhead reads from the timeline, not a
-  raw file.
+- **M2 — Timeline core.** ✅ `v1000-timeline` is the central object:
+  `Sequence → Track → Clip` over a shared media pool, with append, in/out trim,
+  and ripple delete. Positions/durations use an exact rational-seconds time
+  model (`Time`/`Rational`) so mixed frame rates compare correctly (see
+  ADR-0005); `TimeCode` is now a display-only SMPTE label. The `Sequence`
+  implements `FrameProducer`, so the **preview reads from the timeline**, not a
+  raw file; the GUI shows a clip-lane timeline with a click/drag playhead.
 - **M3 — Processing graph.** `v1000-core` graph executes a clip → transform →
   output chain deterministically per timecode, with branch-parallel execution
   (not naive all-node parallelism).
@@ -122,6 +126,24 @@ plays end-to-end.
   (waveform/vectorscope) — all GPU-side.
 - **M8+** — Transitions, keyframe editor, undo/redo (command + diff), media
   browser, plugin sandbox (WASM).
+
+### Hardening backlog (cross-cutting, scheduled, not yet done)
+
+These are known simplifications in the current code, deferred deliberately so
+each milestone stays shippable. They are *not* hidden — they're tracked here:
+
+- **Decode is frame-index based, not PTS/timebase based.** The decoder serves
+  frames in decode order at an assumed/estimated rate. Real correctness needs
+  PTS/DTS, stream timebases, variable-frame-rate media, B-frame ordering, and
+  A/V sync. *Lands when audio (M5) forces real sync.*
+- **Frame model is locked to packed RGBA8.** Professional editing needs pixel
+  format/planes, bit depth, color space/transfer, alpha, and HDR metadata.
+  *Lands with the color pipeline (M7); effects/export should not harden around
+  RGBA8 before then.*
+- **Decode + upload happen synchronously on the UI thread.** This will hitch on
+  real media. Needs background decode workers, bounded queues, a cache policy,
+  and proxy/optimized-media support. *Lands alongside M3’s graph executor.*
+- **Seek is rewind-to-start, not GOP-aware** (from M1).
 
 ---
 
@@ -176,6 +198,8 @@ Non-obvious architectural choices live in `docs/decisions/` as short ADRs
   allocation in core crates; macOS/Apple Silicon is a first-class target.
 - **ADR-0004** Codec/licensing strategy: royalty-free + hardware default, GPL
   codecs opt-in.
+- **ADR-0005** Canonical time model: exact rational seconds (`Time`/`Rational`),
+  `TimeCode` display-only — mixed frame rates compare correctly.
 
 See [AGENT.md](AGENT.md) for conventions, build/test details, and guidance when
 working in this repo.

@@ -5,8 +5,10 @@
 //! `ffmpeg` feature — a [`FileDecoder`] backed by a single FFmpeg binding
 //! (`ffmpeg-the-third`; see ADR-0004).
 
+mod producer;
 mod source;
 
+pub use producer::FrameProducer;
 pub use source::{FrameSource, SourceError, TestPatternSource};
 
 #[cfg(feature = "ffmpeg")]

@@ -1,54 +1,59 @@
 //! Editor application shell for V1000.
 //!
-//! At milestone M1 the central panel is a working preview player: it pulls the
-//! current frame from a [`v1000_render::PreviewEngine`], uploads it to the GPU
-//! through eframe's wgpu backend, and draws it, with transport controls
-//! (play/pause, scrub, go-to-start) below. With the `ffmpeg` feature an
-//! "Open…" button decodes a real file; otherwise an animated test pattern
-//! plays.
+//! As of M2 the app edits a [`Sequence`]: the preview reads frames from the
+//! timeline (not a raw source), a minimal timeline strip shows the clips with a
+//! click/drag-to-seek playhead, and the transport plays the sequence. With the
+//! `ffmpeg` feature, "Open…" appends a decoded file as a new clip so you can see
+//! multiple clips on the timeline; otherwise an animated test pattern plays.
 
 use eframe::egui;
 
-use v1000_codec::TestPatternSource;
-use v1000_render::PreviewEngine;
+use v1000_codec::{FrameProducer, TestPatternSource};
+use v1000_core::{Time, TimeCode};
+use v1000_render::Transport;
+use v1000_timeline::Sequence;
 
-/// Formats seconds as `M:SS.s`.
-fn fmt_time(seconds: f64) -> String {
-    let s = seconds.max(0.0);
-    let minutes = (s / 60.0).floor() as u64;
-    let rem = s - (minutes * 60) as f64;
-    format!("{minutes}:{rem:04.1}")
-}
-
-/// Top-level application state: the preview player.
+/// Top-level application state: a sequence being previewed.
 pub struct V1000App {
-    engine: PreviewEngine,
+    sequence: Sequence,
+    transport: Transport,
     texture: Option<egui::TextureHandle>,
-    /// Frame index currently uploaded, to skip redundant GPU uploads.
-    shown_index: Option<u64>,
+    /// Frame index (at the sequence timebase) currently uploaded, to skip
+    /// redundant GPU uploads while the playhead sits on one frame.
+    shown_frame: Option<i64>,
+    has_frame: bool,
     status: String,
 }
 
 impl V1000App {
-    /// Builds the app with the default animated test-pattern source.
+    /// Builds the app previewing a single-clip test-pattern sequence.
     pub fn new() -> Self {
-        let source = Box::new(TestPatternSource::default_preview());
+        let sequence = Sequence::single(Box::new(TestPatternSource::default_preview()));
+        let mut transport = Transport::new();
+        transport.set_duration(sequence.duration());
         Self {
-            engine: PreviewEngine::new(source),
+            sequence,
+            transport,
             texture: None,
-            shown_index: None,
+            shown_frame: None,
+            has_frame: false,
             status: String::new(),
         }
     }
 
-    /// Uploads the current frame to the GPU texture if the index changed.
+    /// Uploads the frame under the playhead to the GPU when it changes.
     fn sync_texture(&mut self, ctx: &egui::Context) {
-        let index = self.engine.current_index();
-        if self.texture.is_some() && self.shown_index == Some(index) {
+        let frame_index = self
+            .transport
+            .playhead_time()
+            .to_frame(self.sequence.timebase());
+        if self.texture.is_some() && self.shown_frame == Some(frame_index) {
             return;
         }
-        match self.engine.current_frame() {
-            Ok(frame) => {
+        self.shown_frame = Some(frame_index);
+
+        match self.sequence.frame_at(self.transport.playhead_time()) {
+            Ok(Some(frame)) => {
                 let image = egui::ColorImage::from_rgba_unmultiplied(frame.size(), frame.pixels());
                 match &mut self.texture {
                     Some(handle) => handle.set(image, egui::TextureOptions::LINEAR),
@@ -57,14 +62,21 @@ impl V1000App {
                             Some(ctx.load_texture("preview", image, egui::TextureOptions::LINEAR));
                     }
                 }
-                self.shown_index = Some(index);
+                self.has_frame = true;
             }
-            Err(e) => self.status = format!("decode error: {e}"),
+            Ok(None) => self.has_frame = false, // gap under the playhead
+            Err(e) => {
+                self.has_frame = false;
+                self.status = format!("decode error: {e}");
+            }
         }
     }
 
     #[cfg(feature = "ffmpeg")]
     fn open_dialog(&mut self) {
+        use v1000_codec::FrameSource;
+        use v1000_core::Rational;
+
         let Some(path) = rfd::FileDialog::new()
             .add_filter("Video", &["mp4", "mov", "mkv", "webm", "avi", "m4v"])
             .pick_file()
@@ -73,15 +85,32 @@ impl V1000App {
         };
         match v1000_codec::FileDecoder::open(&path) {
             Ok(decoder) => {
-                self.engine.set_source(Box::new(decoder));
-                self.shown_index = None;
-                self.status = format!("opened {}", path.display());
+                let (num, den) = decoder.fps();
+                let rate = Rational::new(num as i64, den as i64);
+                let duration = Time::from_frame(decoder.frame_count() as i64, rate);
+                let id = self.sequence.add_media(Box::new(decoder));
+                // Append after existing content so the timeline shows two clips.
+                self.sequence.track_mut(0).append(id, Time::ZERO, duration);
+                self.transport.set_duration(self.sequence.duration());
+                self.shown_frame = None;
+                self.status = format!("appended {}", path.display());
             }
             Err(e) => self.status = format!("open failed: {e}"),
         }
     }
 
-    fn toolbar(&mut self, ui: &mut egui::Ui) {
+    /// Ripple-deletes the clip on the top track under the playhead.
+    fn ripple_delete_at_playhead(&mut self) {
+        let t = self.transport.playhead_time();
+        let last = self.sequence.tracks().len().saturating_sub(1);
+        if let Some(i) = self.sequence.tracks()[last].clip_index_at(t) {
+            self.sequence.track_mut(last).ripple_delete(i);
+            self.transport.set_duration(self.sequence.duration());
+            self.shown_frame = None;
+        }
+    }
+
+    fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
             ui.menu_button("File", |ui| {
                 #[cfg(feature = "ffmpeg")]
@@ -103,9 +132,9 @@ impl V1000App {
         });
     }
 
-    fn transport(&mut self, ui: &mut egui::Ui) {
+    fn transport_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let play_label = if self.engine.is_playing() {
+            let play_label = if self.transport.is_playing() {
                 "⏸"
             } else {
                 "▶"
@@ -115,26 +144,79 @@ impl V1000App {
                 .on_hover_text("Play/Pause (Space)")
                 .clicked()
             {
-                self.engine.toggle();
+                self.transport.toggle();
             }
             if ui.button("⏮").on_hover_text("Go to start").clicked() {
-                self.engine.seek_seconds(0.0);
+                self.transport.seek_seconds(0.0);
+            }
+            if ui
+                .button("✂ ripple-delete")
+                .on_hover_text("Delete clip under playhead")
+                .clicked()
+            {
+                self.ripple_delete_at_playhead();
             }
 
-            let duration = self.engine.duration_seconds();
-            let mut t = self.engine.playhead_seconds();
-            let slider = egui::Slider::new(&mut t, 0.0..=duration.max(0.001)).show_value(false);
-            if ui.add(slider).changed() {
-                self.engine.seek_seconds(t);
-            }
-
-            ui.monospace(format!(
-                "{} / {}   frame {}",
-                fmt_time(t),
-                fmt_time(duration),
-                self.engine.current_index()
-            ));
+            let timebase = self.sequence.timebase();
+            let now = TimeCode::from_time(self.transport.playhead_time(), timebase);
+            let total = TimeCode::from_time(
+                Time::from_seconds_f64(self.transport.duration_seconds()),
+                timebase,
+            );
+            ui.monospace(format!("{now} / {total}"));
         });
+    }
+
+    /// Draws the clip lanes and the playhead; click/drag seeks.
+    fn timeline_view(&mut self, ui: &mut egui::Ui) {
+        let duration = self.transport.duration_seconds().max(1e-3);
+        let lane_h = 26.0;
+        let lanes = self.sequence.tracks().len().max(1) as f32;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), lane_h * lanes),
+            egui::Sense::click_and_drag(),
+        );
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_gray(28));
+
+        let x_of = |secs: f64| rect.left() + (secs / duration) as f32 * rect.width();
+
+        // Topmost track on the top lane.
+        for (row, track) in self.sequence.tracks().iter().rev().enumerate() {
+            let y0 = rect.top() + row as f32 * lane_h;
+            for (i, clip) in track.clips().iter().enumerate() {
+                let clip_rect = egui::Rect::from_min_max(
+                    egui::pos2(x_of(clip.timeline_start.as_seconds_f64()) + 1.0, y0 + 2.0),
+                    egui::pos2(x_of(clip.end().as_seconds_f64()) - 1.0, y0 + lane_h - 2.0),
+                );
+                let fill = if i % 2 == 0 {
+                    egui::Color32::from_rgb(60, 90, 130)
+                } else {
+                    egui::Color32::from_rgb(80, 70, 120)
+                };
+                painter.rect_filled(clip_rect, 2.0, fill);
+                painter.rect_stroke(
+                    clip_rect,
+                    2.0,
+                    egui::Stroke::new(1.0, egui::Color32::from_gray(180)),
+                );
+            }
+        }
+
+        // Playhead.
+        let px = x_of(self.transport.playhead_seconds());
+        painter.vline(
+            px,
+            rect.y_range(),
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 80, 80)),
+        );
+
+        if response.dragged() || response.clicked() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let frac = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+                self.transport.seek_fraction(frac as f64);
+            }
+        }
     }
 }
 
@@ -146,49 +228,51 @@ impl Default for V1000App {
 
 impl eframe::App for V1000App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Advance playback by the time since the last frame.
         let dt = ctx.input(|i| i.stable_dt) as f64;
-        self.engine.tick(dt);
-
-        // Space toggles play/pause.
+        self.transport.tick(dt);
         if ctx.input(|i| i.key_pressed(egui::Key::Space)) {
-            self.engine.toggle();
+            self.transport.toggle();
         }
 
         self.sync_texture(ctx);
 
-        egui::TopBottomPanel::top("toolbar").show(ctx, |ui| self.toolbar(ui));
+        egui::TopBottomPanel::top("menu_bar").show(ctx, |ui| self.menu_bar(ui));
 
         egui::SidePanel::left("media_browser")
             .resizable(true)
-            .default_width(220.0)
+            .default_width(200.0)
             .show(ctx, |ui| ui.heading("Media"));
 
         egui::SidePanel::right("effects_panel")
             .resizable(true)
-            .default_width(260.0)
+            .default_width(240.0)
             .show(ctx, |ui| ui.heading("Effects"));
 
-        egui::TopBottomPanel::bottom("transport")
-            .resizable(false)
-            .show(ctx, |ui| self.transport(ui));
+        egui::TopBottomPanel::bottom("timeline")
+            .resizable(true)
+            .default_height(150.0)
+            .show(ctx, |ui| {
+                self.transport_bar(ui);
+                ui.separator();
+                self.timeline_view(ui);
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(handle) = &self.texture {
-                ui.centered_and_justified(|ui| {
+            ui.centered_and_justified(|ui| match (&self.texture, self.has_frame) {
+                (Some(handle), true) => {
                     ui.add(
                         egui::Image::from_texture(egui::load::SizedTexture::from_handle(handle))
                             .maintain_aspect_ratio(true)
                             .fit_to_exact_size(ui.available_size()),
                     );
-                });
-            } else {
-                ui.centered_and_justified(|ui| ui.label("no preview"));
-            }
+                }
+                _ => {
+                    ui.label("no frame under playhead");
+                }
+            });
         });
 
-        // Keep animating while playing.
-        if self.engine.is_playing() {
+        if self.transport.is_playing() {
             ctx.request_repaint();
         }
     }

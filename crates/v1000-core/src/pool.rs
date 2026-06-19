@@ -27,12 +27,18 @@ impl FramePool {
         }
     }
 
-    /// Returns a zeroed frame of the requested size, reusing a pooled buffer
-    /// when one is available.
+    /// Returns a zeroed frame of the requested size.
+    ///
+    /// Reuses a pooled buffer only when one already has enough capacity, so a
+    /// request for a larger frame never forces a too-small buffer to
+    /// reallocate (which matters with mixed resolutions). When nothing fits, a
+    /// fresh buffer is allocated and the smaller ones stay pooled for smaller
+    /// requests.
     pub fn acquire(&mut self, width: u32, height: u32) -> Frame {
         let needed = Frame::byte_len(width, height);
-        match self.free.pop() {
-            Some(mut buf) => {
+        match self.free.iter().position(|buf| buf.capacity() >= needed) {
+            Some(pos) => {
+                let mut buf = self.free.swap_remove(pos);
                 buf.clear();
                 buf.resize(needed, 0);
                 Frame::from_pixels(width, height, buf)
@@ -84,5 +90,21 @@ mod tests {
         pool.release(Frame::new(8, 8));
         pool.release(Frame::new(8, 8));
         assert_eq!(pool.available(), 1, "excess buffers are dropped");
+    }
+
+    #[test]
+    fn larger_request_does_not_grab_a_too_small_buffer() {
+        let mut pool = FramePool::with_capacity(4);
+        pool.release(Frame::new(8, 8)); // small buffer pooled
+                                        // Requesting a larger frame must not reuse (and realloc) the small one.
+        let _large = pool.acquire(64, 64);
+        assert_eq!(
+            pool.available(),
+            1,
+            "small buffer stays for a small request"
+        );
+        // A small request reuses it.
+        let _small = pool.acquire(8, 8);
+        assert_eq!(pool.available(), 0);
     }
 }

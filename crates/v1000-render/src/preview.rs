@@ -1,69 +1,62 @@
-//! Preview transport: maps a wall-clock playhead onto frames from a source.
+//! Preview transport: the playback clock.
+//!
+//! The transport is intentionally decoupled from the media. It tracks only the
+//! playhead and play state; the caller owns the [`FrameProducer`] (a timeline
+//! `Sequence`) and asks it for the frame at [`Transport::playhead_time`]. That
+//! keeps this crate free of any timeline dependency while the preview reads
+//! from the sequence.
+//!
+//! [`FrameProducer`]: v1000_codec::FrameProducer
 
-use std::sync::Arc;
+use v1000_core::Time;
 
-use v1000_codec::{FrameSource, SourceError};
-use v1000_core::{Frame, TimeCode};
-
-/// Drives playback over a [`FrameSource`].
+/// The playback clock: a playhead in seconds, a play/pause flag, and the total
+/// duration it loops within.
 ///
-/// Holds a floating-point playhead in seconds advanced by `tick(dt)`, and maps
-/// it to a frame index on demand. The GPU upload of the produced frame is the
-/// GUI's responsibility this milestone; the wgpu device and render graph this
-/// crate will eventually own arrive with M3.
-///
-/// Playback loops at the end of the source so the preview runs continuously.
-pub struct PreviewEngine {
-    source: Box<dyn FrameSource>,
+/// The playhead is a floating-point seconds accumulator because it is advanced
+/// by wall-clock frame delta-time; convert it to an exact [`Time`] with
+/// [`Transport::playhead_time`] when addressing media. Edit points themselves
+/// never go through this float path — they are authored as exact `Time`.
+#[derive(Debug, Clone)]
+pub struct Transport {
     playhead: f64,
+    duration: f64,
     playing: bool,
 }
 
-impl PreviewEngine {
-    /// Wraps a frame source, paused at the start.
-    pub fn new(source: Box<dyn FrameSource>) -> Self {
+impl Default for Transport {
+    fn default() -> Self {
         Self {
-            source,
             playhead: 0.0,
+            duration: 0.0,
             playing: false,
         }
     }
+}
 
-    /// Replaces the source (e.g. after opening a file) and rewinds to the start.
-    pub fn set_source(&mut self, source: Box<dyn FrameSource>) {
-        self.source = source;
-        self.playhead = 0.0;
+impl Transport {
+    /// A paused transport at time zero with no duration.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Sets the total duration (e.g. from the sequence), clamping the playhead.
+    pub fn set_duration(&mut self, duration: Time) {
+        self.duration = duration.as_seconds_f64().max(0.0);
+        if self.playhead > self.duration {
+            self.playhead = self.duration;
+        }
     }
 
     /// Advances the playhead by `dt` seconds when playing, looping at the end.
     pub fn tick(&mut self, dt: f64) {
-        if !self.playing {
-            return;
-        }
-        let duration = self.duration_seconds();
-        if duration <= 0.0 {
+        if !self.playing || self.duration <= 0.0 {
             return;
         }
         self.playhead += dt.max(0.0);
-        if self.playhead >= duration {
-            self.playhead %= duration;
+        if self.playhead >= self.duration {
+            self.playhead %= self.duration;
         }
-    }
-
-    /// The frame index the playhead currently lands on, clamped to the source.
-    pub fn current_index(&self) -> u64 {
-        let (num, den) = self.source.fps();
-        let idx = TimeCode::at_seconds(self.playhead.max(0.0), num, den).frames();
-        idx.min(self.source.frame_count().saturating_sub(1))
-    }
-
-    /// Produces the frame at the current playhead.
-    ///
-    /// # Errors
-    /// Propagates any [`SourceError`] from the underlying source.
-    pub fn current_frame(&mut self) -> Result<Arc<Frame>, SourceError> {
-        let index = self.current_index();
-        self.source.frame(index)
     }
 
     /// Starts playback.
@@ -86,14 +79,14 @@ impl PreviewEngine {
         self.playing
     }
 
-    /// Moves the playhead to an absolute time in seconds (clamped to `[0, dur]`).
+    /// Moves the playhead to an absolute time in seconds (clamped).
     pub fn seek_seconds(&mut self, seconds: f64) {
-        self.playhead = seconds.clamp(0.0, self.duration_seconds());
+        self.playhead = seconds.clamp(0.0, self.duration);
     }
 
-    /// Moves the playhead to a fraction `[0, 1]` of the total duration.
+    /// Moves the playhead to a fraction `[0, 1]` of the duration.
     pub fn seek_fraction(&mut self, fraction: f64) {
-        self.seek_seconds(fraction.clamp(0.0, 1.0) * self.duration_seconds());
+        self.seek_seconds(fraction.clamp(0.0, 1.0) * self.duration);
     }
 
     /// Current playhead position in seconds.
@@ -101,63 +94,63 @@ impl PreviewEngine {
         self.playhead
     }
 
-    /// Total duration of the source in seconds.
-    pub fn duration_seconds(&self) -> f64 {
-        self.source.duration_seconds()
+    /// Current playhead as an exact [`Time`], for addressing media.
+    pub fn playhead_time(&self) -> Time {
+        Time::from_seconds_f64(self.playhead)
     }
 
-    /// Source dimensions as `(width, height)`.
-    pub fn dimensions(&self) -> (u32, u32) {
-        self.source.dimensions()
+    /// Total duration in seconds.
+    pub fn duration_seconds(&self) -> f64 {
+        self.duration
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use v1000_codec::TestPatternSource;
+    use v1000_core::Rational;
 
-    fn engine() -> PreviewEngine {
-        // 30 fps, 90 frames => 3.0 s.
-        PreviewEngine::new(Box::new(TestPatternSource::new(64, 36, 30, 1, 90)))
+    fn three_seconds() -> Transport {
+        let mut tr = Transport::new();
+        tr.set_duration(Time::from_frame(90, Rational::new(30, 1))); // 3.0s
+        tr
     }
 
     #[test]
     fn paused_does_not_advance() {
-        let mut e = engine();
-        e.tick(1.0);
-        assert_eq!(e.playhead_seconds(), 0.0);
-        assert_eq!(e.current_index(), 0);
+        let mut tr = three_seconds();
+        tr.tick(1.0);
+        assert_eq!(tr.playhead_seconds(), 0.0);
     }
 
     #[test]
-    fn playing_advances_index() {
-        let mut e = engine();
-        e.play();
-        e.tick(1.0); // 1s @ 30fps -> frame 30
-        assert_eq!(e.current_index(), 30);
+    fn playing_advances_and_maps_to_frame() {
+        let mut tr = three_seconds();
+        tr.play();
+        tr.tick(1.0);
+        assert_eq!(tr.playhead_time().to_frame(Rational::new(30, 1)), 30);
     }
 
     #[test]
     fn playback_loops_at_end() {
-        let mut e = engine();
-        e.play();
-        e.tick(3.5); // past the 3.0s duration
-        assert!(e.playhead_seconds() < 3.0, "should have wrapped");
+        let mut tr = three_seconds();
+        tr.play();
+        tr.tick(3.5);
+        assert!(tr.playhead_seconds() < 3.0, "should have wrapped");
     }
 
     #[test]
     fn seek_fraction_maps_to_time() {
-        let mut e = engine();
-        e.seek_fraction(0.5);
-        assert!((e.playhead_seconds() - 1.5).abs() < 1e-9);
-        assert_eq!(e.current_index(), 45);
+        let mut tr = three_seconds();
+        tr.seek_fraction(0.5);
+        assert!((tr.playhead_seconds() - 1.5).abs() < 1e-9);
     }
 
     #[test]
-    fn index_is_clamped_to_last_frame() {
-        let mut e = engine();
-        e.seek_seconds(100.0); // clamps to duration
-        assert_eq!(e.current_index(), 89);
+    fn shrinking_duration_clamps_playhead() {
+        let mut tr = three_seconds();
+        tr.seek_seconds(2.5);
+        tr.set_duration(Time::from_frame(30, Rational::new(30, 1))); // 1.0s
+        assert_eq!(tr.playhead_seconds(), 1.0);
     }
 }

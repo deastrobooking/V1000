@@ -12,7 +12,7 @@
 pub fn default_target() -> &'static str {
     let _render = v1000_render::info();
     let _audio = v1000_audio::playhead_default();
-    let _timeline = std::mem::size_of::<v1000_timeline::Span>();
+    let _timeline = std::mem::size_of::<v1000_timeline::Clip>();
     "mp4/h264 (hardware, pending M6)"
 }
 

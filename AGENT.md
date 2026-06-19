@@ -103,8 +103,17 @@ Silicon you may need `PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg/lib/pkgconfig`.
   `tokio` for the export-orchestration edge; don't pull async into the core.
 - **Frames:** share as `Arc<Frame>`; recycle backing buffers through a pool.
   Treat frame contents as immutable once produced.
-- **Timecode:** rational (frames + fps), never floating-point seconds for edit
-  math, to avoid drift.
+- **Time (ADR-0005):** timeline positions/durations are `v1000_core::Time` —
+  exact rational seconds, rate-agnostic. Convert to a frame index only via
+  `Time::to_frame(fps)`/`Time::from_frame(n, fps)`, always naming the rate.
+  Never order or compare frame-count-plus-rate pairs, and never use `f64`
+  seconds for edit math (only for the wall-clock playhead and GPU/UI upload).
+  `TimeCode` is a display-only SMPTE label — do not give it `Ord` or use it for
+  logic.
+- **Preview reads the timeline:** the preview must pull frames from a
+  `FrameProducer` (a `Sequence`), never wire a panel directly to a raw
+  `FrameSource`. The `Transport` holds only the playhead; the caller owns the
+  sequence.
 - **`unsafe`:** allowed only for SIMD/FFI/GPU interop, must carry a `// SAFETY:`
   comment, and must stay behind a safe API. Prefer a safe portable crate first.
 - **Formatting:** default `rustfmt`. Module/file names `snake_case`, types

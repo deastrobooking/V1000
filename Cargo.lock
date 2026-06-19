@@ -3124,6 +3124,7 @@ dependencies = [
  "v1000-codec",
  "v1000-core",
  "v1000-render",
+ "v1000-timeline",
 ]
 
 [[package]]
@@ -3138,6 +3139,7 @@ dependencies = [
 name = "v1000-timeline"
 version = "0.0.0"
 dependencies = [
+ "v1000-codec",
  "v1000-core",
 ]
 
