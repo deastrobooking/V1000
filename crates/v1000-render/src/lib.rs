@@ -1,16 +1,21 @@
 //! Rendering for V1000.
 //!
-//! Owns the `wgpu` device/queue, executes the processing graph in dependency
-//! order (parallelizing only independent branches — never all nodes naively),
-//! and drives the real-time preview. Pixel work runs in WGSL compute/render
-//! passes; CPU is a portable fallback only.
+//! At milestone M1 this provides the [`PreviewEngine`] — the playback transport
+//! that maps a wall-clock playhead onto frames from a [`v1000_codec`] source.
 //!
-//! Milestone M1 fills this in. Stub for now.
+//! Owning the `wgpu` device, executing the processing graph in dependency order
+//! (parallelizing only independent branches — never all nodes naively), and
+//! driving custom GPU passes arrive with M3. For now the GUI uploads the
+//! produced frame to the GPU through eframe's wgpu backend.
+
+mod preview;
+
+pub use preview::PreviewEngine;
 
 /// One-line description of the render backend, including its decode source.
 pub fn info() -> String {
     format!(
-        "wgpu render (pending M1) over {}",
+        "wgpu render (M1: preview transport) over {}",
         v1000_codec::backend_name()
     )
 }

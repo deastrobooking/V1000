@@ -1,21 +1,33 @@
 //! Media input/output for V1000.
 //!
-//! Wraps a single FFmpeg binding (`ffmpeg-next`) as the decode/mux backend and
-//! exposes a GOP-aware, cached decoder to the rest of the engine. Standalone
-//! encoder/muxer crates are gated behind features and a licensing decision
-//! (see ADR-0004) — they are not part of the default path.
-//!
-//! Milestone M1 fills this in. Stub for now.
+//! Exposes the [`FrameSource`] abstraction that decoders implement, an animated
+//! [`TestPatternSource`] used as the default preview source, and — with the
+//! `ffmpeg` feature — a [`FileDecoder`] backed by a single FFmpeg binding
+//! (`ffmpeg-the-third`; see ADR-0004).
 
-/// Returns the crate name. Placeholder until M1 lands the decoder.
+mod source;
+
+pub use source::{FrameSource, SourceError, TestPatternSource};
+
+#[cfg(feature = "ffmpeg")]
+mod decoder;
+
+#[cfg(feature = "ffmpeg")]
+pub use decoder::FileDecoder;
+
+/// Name of the active decode backend, for diagnostics and the about box.
 pub fn backend_name() -> &'static str {
-    "ffmpeg-next (pending M1)"
+    if cfg!(feature = "ffmpeg") {
+        "ffmpeg-the-third"
+    } else {
+        "test-pattern only (build with --features ffmpeg for file decode)"
+    }
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn backend_is_named() {
-        assert!(super::backend_name().contains("ffmpeg"));
+        assert!(!super::backend_name().is_empty());
     }
 }

@@ -5,8 +5,17 @@
 //! the same inputs the engine must produce identical output, so wall-clock
 //! time, RNG, and I/O do not belong on the render path.
 //!
-//! At milestone M0 this is a stub exposing only [`TimeCode`]. Frame types, the
-//! color pipeline, and the processing graph land in later milestones.
+//! As of milestone M1 this exposes [`TimeCode`], the [`Frame`] pixel type, and
+//! the playback support types [`FramePool`] and [`FrameCache`]. The color
+//! pipeline and processing graph land in later milestones.
+
+mod cache;
+mod frame;
+mod pool;
+
+pub use cache::FrameCache;
+pub use frame::Frame;
+pub use pool::FramePool;
 
 /// A position or duration on a timeline, expressed as a whole number of frames
 /// at a given frame rate.
@@ -29,6 +38,22 @@ impl TimeCode {
     /// Panics if either rate component is zero.
     pub fn new(frames: u64, fps_num: u32, fps_den: u32) -> Self {
         assert!(fps_num != 0 && fps_den != 0, "frame rate must be non-zero");
+        Self {
+            frames,
+            fps_num,
+            fps_den,
+        }
+    }
+
+    /// The nearest whole-frame timecode to `seconds` at the rate `fps_num /
+    /// fps_den`. Used to map a wall-clock playhead onto a frame index.
+    ///
+    /// # Panics
+    /// Panics if either rate component is zero, or if `seconds` is negative.
+    pub fn at_seconds(seconds: f64, fps_num: u32, fps_den: u32) -> Self {
+        assert!(fps_num != 0 && fps_den != 0, "frame rate must be non-zero");
+        assert!(seconds >= 0.0, "timecode seconds must be non-negative");
+        let frames = (seconds * fps_num as f64 / fps_den as f64).round() as u64;
         Self {
             frames,
             fps_num,
@@ -60,5 +85,13 @@ mod tests {
     #[test]
     fn ordering_is_by_frame() {
         assert!(TimeCode::new(1, 24, 1) < TimeCode::new(2, 24, 1));
+    }
+
+    #[test]
+    fn at_seconds_rounds_to_nearest_frame() {
+        assert_eq!(TimeCode::at_seconds(1.0, 30, 1).frames(), 30);
+        // 1.51s @ 30fps = frame 45.3 -> 45
+        assert_eq!(TimeCode::at_seconds(1.51, 30, 1).frames(), 45);
+        assert_eq!(TimeCode::at_seconds(0.0, 30, 1).frames(), 0);
     }
 }

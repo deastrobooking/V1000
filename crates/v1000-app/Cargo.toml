@@ -10,6 +10,11 @@ description = "V1000 editor binary."
 name = "v1000"
 path = "src/main.rs"
 
+[features]
+default = []
+# Enables real file decoding (FFmpeg) + the open-file dialog in the GUI.
+ffmpeg = ["v1000-gui/ffmpeg"]
+
 [dependencies]
 v1000-gui.workspace = true
 anyhow.workspace = true
