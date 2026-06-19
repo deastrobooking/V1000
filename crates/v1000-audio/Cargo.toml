@@ -1,0 +1,10 @@
+[package]
+name = "v1000-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Real-time audio engine, mixing graph, and resampling (cpal-backed)."
+
+[dependencies]
+v1000-core.workspace = true

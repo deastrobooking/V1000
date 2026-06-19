@@ -1,0 +1,10 @@
+[package]
+name = "v1000-codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Media I/O and decode/encode abstraction (FFmpeg-backed)."
+
+[dependencies]
+v1000-core.workspace = true

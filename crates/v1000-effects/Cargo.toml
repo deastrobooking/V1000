@@ -1,0 +1,11 @@
+[package]
+name = "v1000-effects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "GPU effect trait and built-in effects (WGSL shaders)."
+
+[dependencies]
+v1000-core.workspace = true
+v1000-render.workspace = true

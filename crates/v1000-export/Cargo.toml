@@ -1,0 +1,13 @@
+[package]
+name = "v1000-export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Offline render-to-file pipeline, muxing, and hardware encoders."
+
+[dependencies]
+v1000-core.workspace = true
+v1000-render.workspace = true
+v1000-timeline.workspace = true
+v1000-audio.workspace = true

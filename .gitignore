@@ -1,0 +1,16 @@
+/target
+**/*.rs.bk
+*.pdb
+.DS_Store
+
+# Local editor/IDE state
+/.idea
+/.vscode
+!/.vscode/extensions.json
+
+# Test/scratch media — never commit large binaries
+/media
+*.mp4
+*.mov
+*.mkv
+*.wav

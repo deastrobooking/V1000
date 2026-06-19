@@ -1,0 +1,10 @@
+[package]
+name = "v1000-timeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Timeline model: sequences, tracks, clips, edit operations, keyframes."
+
+[dependencies]
+v1000-core.workspace = true

@@ -1,0 +1,60 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/v1000-core",
+    "crates/v1000-codec",
+    "crates/v1000-timeline",
+    "crates/v1000-render",
+    "crates/v1000-effects",
+    "crates/v1000-audio",
+    "crates/v1000-export",
+    "crates/v1000-gui",
+    "crates/v1000-app",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.80"
+license = "SEE LICENSE FILE"
+repository = "https://github.com/"
+authors = ["V1000 contributors"]
+
+# Committed dependency choices — one tool per concern (see AGENT.md / ADR-0001).
+# Only the deps a milestone actually needs are activated by member crates; the
+# rest are declared here so versions are pinned in one place when their
+# milestone lands. Unreferenced workspace deps are not fetched or built.
+[workspace.dependencies]
+# Internal crates
+v1000-core = { path = "crates/v1000-core" }
+v1000-codec = { path = "crates/v1000-codec" }
+v1000-timeline = { path = "crates/v1000-timeline" }
+v1000-render = { path = "crates/v1000-render" }
+v1000-effects = { path = "crates/v1000-effects" }
+v1000-audio = { path = "crates/v1000-audio" }
+v1000-export = { path = "crates/v1000-export" }
+v1000-gui = { path = "crates/v1000-gui" }
+
+# GUI (M0+)
+egui = "0.29"
+eframe = "0.29"
+
+# Errors (all crates)
+thiserror = "1"
+anyhow = "1"
+
+# The following land with their milestones — declared, not yet activated:
+# GPU (M1):           wgpu = "22"
+# Media I/O (M1):     ffmpeg-next = "7"
+# Parallelism:        rayon = "1", crossbeam = "0.8", parking_lot = "0.12"
+# Collections (M3):   slotmap = "1", lru = "0.12"
+# Serialization:      ciborium = "0.2"
+# Audio (M5):         cpal = "0.15", rubato = "0.15"
+# Numerics:           half = "2", wide = "0.7"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 1   # decode/render are unusably slow at opt-level 0

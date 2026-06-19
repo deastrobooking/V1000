@@ -1,0 +1,11 @@
+[package]
+name = "v1000-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "wgpu device/context, render-graph execution, and preview engine."
+
+[dependencies]
+v1000-core.workspace = true
+v1000-codec.workspace = true

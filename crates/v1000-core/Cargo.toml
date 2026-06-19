@@ -1,0 +1,9 @@
+[package]
+name = "v1000-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core types for V1000: frames, timecode, color, processing graph."
+
+[dependencies]
